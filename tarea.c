@@ -58,6 +58,7 @@ size_t write_callback(void *contenido, size_t size, size_t nmemb, void *userp)
 // Función que utiliza curl.h para extraer el html de una página y guardarlo en memoria
 mem *fetch_url(char *url)
 {
+    sem_wait(&semaforo_curl);
     // Inicializaciones básicas
     CURLcode res;
     mem *memoria = (mem *)malloc(sizeof(mem));
@@ -65,7 +66,6 @@ mem *fetch_url(char *url)
     memoria->memory = malloc(1);
     memoria->size = 0;
 
-    sem_wait(&semaforo_curl);
     CURL* curl = curl_easy_init();
     if (!curl)
     {
@@ -96,6 +96,7 @@ mem *fetch_url(char *url)
         fprintf(stderr, "curl_easy_perform() falla: %s\n", curl_easy_strerror(res));
     }
 
+    sem_post(&semaforo_curl); 
     // Retornamos el contenido html
     return memoria;
 }
@@ -108,8 +109,7 @@ void *spider(void *data)
 
     // Extrae todo el html de la url
     mem *memoria = fetch_url(url);
-    sem_post(&semaforo_curl); 
-    
+
     // Comienza buscando el primer enlace (Asumiendo que está en una propiedad href)
     char *inicio = strstr(memoria->memory, "href=\"");
     char *final = NULL;
@@ -147,10 +147,11 @@ void *spider(void *data)
             fprintf(archivo_visitados, "%s\n", aux);
         }
         fclose(archivo_visitados);
-        sem_post(&semaforo_visitados);
-        
         // Se libera la memoria porque un webcrawler puede requerir demasiados recursos
         free(aux);
+        sem_post(&semaforo_visitados);
+
+        sleep(0.1);
         // Busca el siguiente enlace
     } while ((inicio = strstr(inicio, "href=\"")) != NULL);
 
@@ -192,7 +193,7 @@ void *spider_thread(void *arg) {
             char sitios_visitados[32];
             FILE *archivo_visitados = fopen("visitados.txt", "r");
             while(fgets(sitios_visitados, sizeof sitios_visitados, archivo_visitados)) {
-                if(!strcmp(sitios_visitados, sitio) || strstr(sitios_visitados, sitio) != NULL) {
+                if(strstr(sitios_visitados, sitio) != NULL) {
                     sitio_existe = true;
                     break;
                 }
