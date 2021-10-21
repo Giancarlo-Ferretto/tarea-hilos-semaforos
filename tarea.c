@@ -7,6 +7,8 @@
 #include <semaphore.h>
 #include <curl/curl.h>
 
+#define MAX_SITE_NAME (64)
+
 int config_cantidad_spiders;
 int config_tiempo;
 
@@ -38,27 +40,28 @@ size_t write_callback(void *contenido, size_t size, size_t nmemb, void *userp)
     char *ptr = realloc(memoria->memory, memoria->size + tamanioreal + 1);
 
     // Si retorna null, entonces no hay memoria y esto falló
-    if (!ptr)
+    if (ptr != NULL)
     {
-        printf("Sin Memoria!");
+        // Si hay memoria, re ajustamos los punteros y copiamos el contenido del nuevo
+        //   bloque al final del bloque anterior
+        memoria->memory = ptr;
+        memcpy(&(memoria->memory[memoria->size]), contenido, tamanioreal);
+        memoria->size += tamanioreal;
+        memoria->memory[memoria->size] = 0;
+
+        // Retornamos el tamaño del bloque recibido
+        return tamanioreal;
+    }
+    else 
+    {
+        fprintf(stderr, "Error: No queda memoria en write_callback.");
         return 0;
     }
-
-    // Si hay memoria, re ajustamos los punteros y copiamos el contenido del nuevo
-    //   bloque al final del bloque anterior
-    memoria->memory = ptr;
-    memcpy(&(memoria->memory[memoria->size]), contenido, tamanioreal);
-    memoria->size += tamanioreal;
-    memoria->memory[memoria->size] = 0;
-
-    // Retornamos el tamaño del bloque recibido
-    return tamanioreal;
 }
 
 // Función que utiliza curl.h para extraer el html de una página y guardarlo en memoria
 mem *fetch_url(char *url)
 {
-    sem_wait(&semaforo_curl);
     // Inicializaciones básicas
     CURLcode res;
     mem *memoria = (mem *)malloc(sizeof(mem));
@@ -66,17 +69,20 @@ mem *fetch_url(char *url)
     memoria->memory = malloc(1);
     memoria->size = 0;
 
+    // Sección crítica: Uso de la librería curl.
+    sem_wait(&semaforo_curl);
+
     CURL* curl = curl_easy_init();
     if (!curl)
     {
-        printf("No se pudo inicializar :c \n");
+        fprintf(stderr, "Error: No se pudo inicializar el curl.\n");
         return memoria;
     }
 
     // Se inicializa la petición de curl con la url a pedir
     curl_easy_setopt(curl, CURLOPT_URL, url);
 
-    curl_easy_setopt( curl, CURLOPT_NOSIGNAL, 0 );
+    curl_easy_setopt( curl, CURLOPT_NOSIGNAL, 0);
 
     // Se establece que cada vez que se recibe un bloque de datos desde la url,
     //  se llama a la función write_callback
@@ -90,13 +96,14 @@ mem *fetch_url(char *url)
     // Ejecutamos la petición
     res = curl_easy_perform(curl);
 
+    sem_post(&semaforo_curl); 
+
     // Si la petición falla, imprimimos el error.
     if (res != CURLE_OK)
     {
         fprintf(stderr, "curl_easy_perform() falla: %s\n", curl_easy_strerror(res));
     }
 
-    sem_post(&semaforo_curl); 
     // Retornamos el contenido html
     return memoria;
 }
@@ -114,49 +121,65 @@ void *spider(void *data)
     char *inicio = strstr(memoria->memory, "href=\"");
     char *final = NULL;
     int size;
-    char *aux;
 
-    // Se va recorriendo cada propiedad href de la página
-    //  y se le imprime
-    do
+    // Comprueba que inicio no sea nulo
+    if(inicio == NULL)
     {
-        // para quitar  ' href=" ' del string
-        inicio += 6;
-        // Se busca desde el inicio hasta el siguiente ", -1 para que no lo contenga
-        final = strstr(inicio, "\"") - 1;
-
-        // +2 por el \0 y el espacio extra.
-        size = final - inicio + 2;
-
-        aux = (char *)malloc(size);
-        strncpy(aux, inicio, size + 1);
-
-        // Se coloca el caracter nulo
-        aux[size - 1] = 0;
-
-        // Cuando se enlaza dentro del mismo dominio, es costumbre no colocar la url completa
-        // para asegurarnos que no se recorra el mismo enlace más de una vez, debe comenzar con su dominio
-        sem_wait(&semaforo_visitados);    
-        FILE *archivo_visitados = fopen("visitados.txt", "a");
-        if (aux[0] == '/')
+        fprintf(stderr, "memoria falla: desborde en sitio -> %s\n", url);
+    }
+    else
+    {
+        // Se va recorriendo cada propiedad href de la página
+        //  y se le imprime
+        do
         {
-            fprintf(archivo_visitados, "%s%s\n", url, aux);
-        }
-        else
-        {
-            fprintf(archivo_visitados, "%s\n", aux);
-        }
-        fclose(archivo_visitados);
-        // Se libera la memoria porque un webcrawler puede requerir demasiados recursos
-        free(aux);
-        sem_post(&semaforo_visitados);
+            // para quitar  ' href=" ' del string
+            inicio += 6;
+            // Se busca desde el inicio hasta el siguiente ", -1 para que no lo contenga
+            final = strstr(inicio, "\"") - 1;
 
-        sleep(0.1);
-        // Busca el siguiente enlace
-    } while ((inicio = strstr(inicio, "href=\"")) != NULL);
+            // +2 por el \0 y el espacio extra.
+            size = final - inicio + 2;
+            if(size)
+            {
+                char *aux = (char *)malloc(size);
+                if(aux == NULL)
+                {
+                    fprintf(stderr, "memoria falla: desborde en malloc do-while -> %s\n", url);
+                    break;
+                }
+                strncpy(aux, inicio, size + 1);
 
+                // Se coloca el caracter nulo
+                aux[size - 1] = 0;
+
+                // Cuando se enlaza dentro del mismo dominio, es costumbre no colocar la url completa
+                // para asegurarnos que no se recorra el mismo enlace más de una vez, debe comenzar con su dominio
+                // Sección crítica: Añadir sitios visitados a "visitados.txt".
+                sem_wait(&semaforo_visitados);    
+                FILE *archivo_visitados = fopen("visitados.txt", "a");
+                if (aux[0] == '/')
+                {
+                    fprintf(archivo_visitados, "%s%s\n", url, aux);
+                }
+                else
+                {
+                    fprintf(archivo_visitados, "%s\n", aux);
+                }
+                fclose(archivo_visitados);
+                // Se libera la memoria porque un webcrawler puede requerir demasiados recursos
+                if(aux != NULL) free(aux);
+                sem_post(&semaforo_visitados);
+                
+                sleep(0.1);
+            }
+            // Busca el siguiente enlace
+        } while ((inicio = strstr(inicio, "href=\"")) != NULL);
+    }
     // Se libera la memoria del fetch_url
-    free(memoria);
+    //if(memoria != NULL) free(memoria);
+    //if(inicio != NULL) free(inicio);
+    sleep(0.1);
 }
 
 void read_config_file() {
@@ -178,7 +201,7 @@ void *timer_thread(void *arg) {
 }
 
 void *spider_thread(void *arg) {
-    char sitio[32];
+    char sitio[MAX_SITE_NAME];
     while(fin_tiempo_programa != true) {
         // Sección crítica: Leer una línea del archivo "sitios.txt".
         sem_wait(&semaforo_sitios);    
@@ -187,10 +210,10 @@ void *spider_thread(void *arg) {
 
         // Si el sitio no es nulo, buscar...
         if(sitio != NULL) {
-            // Sección crítica: Buscar si el sitio ya fue visitado.
-            bool sitio_existe = false;
+            // Sección crítica: Buscar si el sitio ya fue visitado en "visitados.txt".
             sem_wait(&semaforo_visitados);  
-            char sitios_visitados[32];
+            bool sitio_existe = false;
+            char sitios_visitados[MAX_SITE_NAME];
             FILE *archivo_visitados = fopen("visitados.txt", "r");
             while(fgets(sitios_visitados, sizeof sitios_visitados, archivo_visitados)) {
                 if(strstr(sitios_visitados, sitio) != NULL) {
@@ -205,7 +228,7 @@ void *spider_thread(void *arg) {
             if(sitio_existe == false) {
                 sitio[strcspn(sitio, "\n")] = 0;
                 
-                // Sección crítica: Se agrega el sitio a visitados
+                // Sección crítica: Se agrega el sitio a "visitados.txt"
                 sem_wait(&semaforo_visitados);    
                 FILE *archivo_visitados = fopen("visitados.txt", "a");
                 fprintf(archivo_visitados, "%s\n", sitio);
