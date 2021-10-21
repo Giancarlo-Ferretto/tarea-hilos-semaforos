@@ -2,6 +2,9 @@
 // 20.688.415-0
 // https://github.com/Giancarlo-Ferretto/Tarea-Hilos-Semaforos
 
+// Compilar: gcc tarea.c -o tarea -lpthread -lcurl
+// Ejecutar: ./tarea
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -11,15 +14,25 @@
 #include <semaphore.h>
 #include <curl/curl.h>
 
+// Se definen las rutas de los archivos
+#define CONFIG_FILE_ROUTE "config.txt"
+#define SITIOS_FILE_ROUTE "sitios.txt"
+#define VISITADOS_FILE_ROUTE "visitados.txt"
+
+// Se define el tamaño estático de un sitio web
 #define MAX_SITE_NAME (64)
 
+// Variables globales de configuración
 int config_cantidad_spiders;
 int config_tiempo;
 
+// Flag que indica si el programa debe finalizar su ejecución.
 bool fin_tiempo_programa;
 
+// Archivo sitios
 FILE *archivo_sitios;
 
+// Semáforos
 sem_t semaforo_sitios;
 sem_t semaforo_curl;
 sem_t semaforo_visitados;
@@ -146,7 +159,8 @@ void *spider(void *data)
             size = final - inicio + 2;
             if(size)
             {
-                char *aux = (char *)malloc(sizeof(char*)*size);
+                char *aux = (char *)malloc(sizeof(char*)*size); // El código del ayudante asignaba mal la memoria del aux
+                                                                // faltó colocarle el tamaño del char* multiplicado por el tamaño del sitio
                 if(aux == NULL)
                 {
                     fprintf(stderr, "memoria falla: desborde en malloc do-while -> %s\n", url);
@@ -159,9 +173,11 @@ void *spider(void *data)
 
                 // Cuando se enlaza dentro del mismo dominio, es costumbre no colocar la url completa
                 // para asegurarnos que no se recorra el mismo enlace más de una vez, debe comenzar con su dominio
-                // Sección crítica: Añadir sitios visitados a "visitados.txt".
+
+                // Sección crítica: Añadir sitios visitados a VISITADOS_FILE_ROUTE.
                 sem_wait(&semaforo_visitados);    
-                FILE *archivo_visitados = fopen("visitados.txt", "a");
+
+                FILE *archivo_visitados = fopen(VISITADOS_FILE_ROUTE, "a");
                 if (aux[0] == '/')
                 {
                     fprintf(archivo_visitados, "%s%s\n", url, aux);
@@ -171,10 +187,14 @@ void *spider(void *data)
                     fprintf(archivo_visitados, "%s\n", aux);
                 }
                 fclose(archivo_visitados);
+                
                 // Se libera la memoria porque un webcrawler puede requerir demasiados recursos
                 free(aux);
-                aux = NULL;
+                aux = NULL; // El ayudante no asignó nulo al puntero aux, entonces la memoria se
+                            // pasaba a la siguiente iteración causando desbordamiento.
+
                 sem_post(&semaforo_visitados);
+                // Fin sección crítica.
                 
                 sleep(0.1);
             }
@@ -187,9 +207,10 @@ void *spider(void *data)
     sleep(0.1);
 }
 
+// Función que lee el archivo CONFIG_FILE_ROUTE e inicializa las variables globales.
 void read_config_file() {
 	char conf[16];
-	FILE *archivo_conf = fopen("config.txt", "r");
+	FILE *archivo_conf = fopen(CONFIG_FILE_ROUTE, "r");
 
 	fgets(conf, sizeof conf, archivo_conf);
 	if(conf != NULL) config_cantidad_spiders = atoi(conf);
@@ -199,6 +220,7 @@ void read_config_file() {
 	return;
 }
 
+// Función del hilo tiempo, cambia la flag tiempo después de x segundos.
 void *timer_thread(void *arg) {
     fin_tiempo_programa = false;
     sleep((long long int)arg);
@@ -207,21 +229,23 @@ void *timer_thread(void *arg) {
     printf("Fin del programa.\n");
 }
 
+// Función del hilo spider, lee sitios, comprueba sitios visitados y despacha sitios a spider().
 void *spider_thread(void *arg) {
     char sitio[MAX_SITE_NAME];
     while(fin_tiempo_programa != true) {
-        // Sección crítica: Leer una línea del archivo "sitios.txt".
+        // Sección crítica: Leer una línea del archivo "SITIOS_FILE_ROUTE".
         sem_wait(&semaforo_sitios);    
         fgets(sitio, sizeof sitio, archivo_sitios);
         sem_post(&semaforo_sitios);
+        // Fin sección crítica.
 
         // Si el sitio no es nulo, buscar...
         if(sitio != NULL) {
-            // Sección crítica: Buscar si el sitio ya fue visitado en "visitados.txt".
+            // Sección crítica: Buscar si el sitio ya fue visitado en VISITADOS_FILE_ROUTE
             sem_wait(&semaforo_visitados);  
             bool sitio_existe = false;
             char sitios_visitados[MAX_SITE_NAME];
-            FILE *archivo_visitados = fopen("visitados.txt", "r");
+            FILE *archivo_visitados = fopen(VISITADOS_FILE_ROUTE, "r");
             while(fgets(sitios_visitados, sizeof sitios_visitados, archivo_visitados)) {
                 if(strstr(sitios_visitados, sitio) != NULL) {
                     sitio_existe = true;
@@ -230,18 +254,20 @@ void *spider_thread(void *arg) {
             }
             fclose(archivo_visitados);
             sem_post(&semaforo_visitados);
+            // Fin sección crítica.
 
             // Si el sitio no fue visitado, visitar...
             if(sitio_existe == false) {
                 sitio[strcspn(sitio, "\n")] = 0;
                 
-                // Sección crítica: Se agrega el sitio a "visitados.txt"
+                // Sección crítica: Se agrega el sitio a VISITADOS_FILE_ROUTE
                 sem_wait(&semaforo_visitados);    
-                FILE *archivo_visitados = fopen("visitados.txt", "a");
+                FILE *archivo_visitados = fopen(VISITADOS_FILE_ROUTE, "a");
                 fprintf(archivo_visitados, "%s\n", sitio);
                 fclose(archivo_visitados);
                 sem_post(&semaforo_visitados);
-
+                // Fin sección crítica.
+                
                 // Se visita...
                 printf("-> Hilo %d visitando %s...\n", (long long int)arg, sitio);
                 spider(sitio);
@@ -264,14 +290,14 @@ int main(int argc, char *argv) {
 	read_config_file();
     printf("Inicio del programa con: [spiders: %d, tiempo: %d].\n", config_cantidad_spiders, config_tiempo);
 
-    // Abrimos archivos sitios.txt
-    archivo_sitios = fopen("sitios.txt", "r");
+    // Abrimos archivos SITIOS_FILE_ROUTE
+    archivo_sitios = fopen(SITIOS_FILE_ROUTE, "r");
 
-    // Se reestablece el archivo visitados.txt
-    FILE *archivo_visitados = fopen("visitados.txt", "w");
+    // Se reestablece el archivo VISITADOS_FILE_ROUTE
+    FILE *archivo_visitados = fopen(VISITADOS_FILE_ROUTE, "w");
     fclose(archivo_visitados);
 
-    printf("Visitando sitios en 'visitados.txt'... si crashea es porque se queda sin memoria.\n");
+    printf("Visitando sitios en '%s'... si crashea es porque se queda sin memoria.\n", VISITADOS_FILE_ROUTE);
 
     // Inicializamos semaforos
     sem_init(&semaforo_sitios, 0, 1);
