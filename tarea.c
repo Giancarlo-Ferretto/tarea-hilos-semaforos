@@ -146,7 +146,7 @@ void *spider(void *data)
             size = final - inicio + 2;
             if(size)
             {
-                char *aux = (char *)malloc(size);
+                char *aux = (char *)malloc(sizeof(char*)*size);
                 if(aux == NULL)
                 {
                     fprintf(stderr, "memoria falla: desborde en malloc do-while -> %s\n", url);
@@ -202,6 +202,8 @@ void *timer_thread(void *arg) {
     fin_tiempo_programa = false;
     sleep((long long int)arg);
     fin_tiempo_programa = true;
+    // Fin del programa, marcado luego que termina el timer_thread.
+    printf("Fin del programa.\n");
 }
 
 void *spider_thread(void *arg) {
@@ -240,7 +242,7 @@ void *spider_thread(void *arg) {
                 sem_post(&semaforo_visitados);
 
                 // Se visita...
-                //printf("Visitando %s...\n", sitio);
+                printf("-> Hilo %d visitando %s...\n", (long long int)arg, sitio);
                 spider(sitio);
             }
             else {
@@ -268,6 +270,8 @@ int main(int argc, char *argv) {
     FILE *archivo_visitados = fopen("visitados.txt", "w");
     fclose(archivo_visitados);
 
+    printf("Visitando sitios en 'visitados.txt'... si crashea es porque se queda sin memoria.\n");
+
     // Inicializamos semaforos
     sem_init(&semaforo_sitios, 0, 1);
     sem_init(&semaforo_curl, 0, 1);
@@ -282,21 +286,15 @@ int main(int argc, char *argv) {
 
     for(int i = 0; i < config_cantidad_spiders; i++) {
         pthread_create(&hilo_spider[i], NULL, &spider_thread, (void *)(long long int)i);
-        printf("hilo %d creado...\n", i+1);
+        //printf("-> Hilo %d creado...\n", i+1);
     }
 
     // Ejecutamos los hilos
     pthread_join(hilo_tiempo, NULL);
 
-    printf("Visitando sitios... si crashea es porque se queda sin memoria.\n");
-    printf("Rellenando 'visitados.txt'..."\n);
-
     for(int i = 0; i < config_cantidad_spiders; i++) {
         pthread_join(hilo_spider[i], NULL);
     }
-
-    // Fin del programa, marcado luego que termina el timer_thread.
-    printf("Fin del programa.\n");
 
     // Fin curl.
     curl_global_cleanup();
