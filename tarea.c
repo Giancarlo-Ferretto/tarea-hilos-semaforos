@@ -1,3 +1,7 @@
+// Giancarlo Ferretto
+// 20.688.415-0
+// https://github.com/Giancarlo-Ferretto/Tarea-Hilos-Semaforos
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
@@ -236,7 +240,7 @@ void *spider_thread(void *arg) {
                 sem_post(&semaforo_visitados);
 
                 // Se visita...
-                printf("Visitando %s...\n", sitio);
+                //printf("Visitando %s...\n", sitio);
                 spider(sitio);
             }
             else {
@@ -283,6 +287,9 @@ int main(int argc, char *argv) {
 
     // Ejecutamos los hilos
     pthread_join(hilo_tiempo, NULL);
+
+    printf("Visitando sitios... si crashea es porque se queda sin memoria.\n");
+    printf("Rellenando 'visitados.txt'..."\n);
 
     for(int i = 0; i < config_cantidad_spiders; i++) {
         pthread_join(hilo_spider[i], NULL);
