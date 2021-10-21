@@ -172,7 +172,8 @@ void *spider(void *data)
                 }
                 fclose(archivo_visitados);
                 // Se libera la memoria porque un webcrawler puede requerir demasiados recursos
-                if(aux != NULL) free(aux);
+                free(aux);
+                aux = NULL;
                 sem_post(&semaforo_visitados);
                 
                 sleep(0.1);
