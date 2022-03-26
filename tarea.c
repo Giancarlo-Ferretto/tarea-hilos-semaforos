@@ -1,7 +1,3 @@
-// Giancarlo Ferretto
-// 20.688.415-0
-// https://github.com/Giancarlo-Ferretto/Tarea-Hilos-Semaforos
-
 // Compilar: gcc tarea.c -o tarea -lpthread -lcurl
 // Ejecutar: ./tarea
 
